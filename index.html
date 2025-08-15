@@ -456,7 +456,27 @@
       ctx.save(); ctx.translate(-22, -16);
       ctx.fillStyle = '#ffeb3b'; ctx.beginPath();
       ctx.moveTo(-10, -2); ctx.quadraticCurveTo(-4, -12, 10, -6); ctx.quadraticCurveTo(4, 4, -10, 2); ctx.closePath(); ctx.fill();
-      ctx.fillStyl extends Enemy {
+      ctx.fillStyle = '#ff9800'; circle(ctx, 3, -5, 2.5, true, false);
+      // sourcil épais
+      ctx.fillStyle = DARK; ctx.beginPath(); ctx.moveTo(-14, -12); ctx.lineTo(14, -18); ctx.lineTo(12, -10); ctx.lineTo(-16, -4); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      // oeil droit
+      ctx.save(); ctx.translate(22, -16);
+      ctx.fillStyle = '#ffeb3b'; ctx.beginPath();
+      ctx.moveTo(-10, -6); ctx.quadraticCurveTo(4, -12, 10, -2); ctx.quadraticCurveTo(6, 6, -10, 0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ff9800'; circle(ctx, 0, -5, 2.5, true, false);
+      ctx.fillStyle = DARK; ctx.beginPath(); ctx.moveTo(-16, -18); ctx.lineTo(14, -12); ctx.lineTo(12, -4); ctx.lineTo(-18, -10); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.restore(); // fin couvercle
+
+      // liserés
+      ctx.strokeStyle = EDGE; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-60, 28); ctx.lineTo(60, 28); ctx.stroke();
+      ctx.strokeStyle = REDD; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-58, 30); ctx.lineTo(58, 30); ctx.stroke();
+
+      ctx.restore();
+    }
+  }
+  class DoughBallEnemy extends Enemy {
     constructor(x,y,vx,vy){ super(x,y,70,70); this.vx=vx; this.vy=vy; this.hp=2; this.score=30; }
     update(dt, game){ this.x+=this.vx*dt; this.y+=this.vy*dt; if (this.x<35 || this.x>W-35) this.vx = -this.vx; if (this.top>H+80) this.alive=false; }
     draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); ctx.fillStyle='#f5e1b4'; ctx.strokeStyle='#b49c78'; ctx.lineWidth=3; circle(ctx,0,0,32,true,true); ctx.fillStyle='#dec89f'; for(let i=0;i<8;i++){ circle(ctx,rand(-22,22),rand(-20,20),2,true); } ctx.restore(); }
@@ -660,9 +680,9 @@
       }
       // Nettoyage
       this.entities = this.entities.filter(e=>{
-        if (!e.alive) return false;
-        if (e.bottom < -120 || e.top > H+140 || e.right < -120 || e.left > W+120) return false;
-        return true;
+        const out = (!e.alive) || (e.bottom < -120 || e.top > H+140 || e.right < -120 || e.left > W+120);
+        if (out) { try { if (typeof e.onRemove==='function') e.onRemove(this); } catch(_){} }
+        return !out;
       });
     }
 
@@ -788,6 +808,13 @@
       pb4.update(0.41, gSauce);
       assert(sauceAdds>0, 'PizzaBox: doit émettre de la sauce à l\'ouverture');
       results.push('PizzaBox sauce-on-open OK');
+
+      // PizzaBox: un seul projectile à la fois (pas de double tir tant que le premier n'est pas retiré)
+      let addsOnce=0; const gOnce={ add:(o)=>{ if (o instanceof SauceBlast) addsOnce++; }, level:1 };
+      const pb5 = new PizzaBoxEnemy(100,-40,100); pb5.open = true; pb5.lastOpen = false; pb5.update(0.01, gOnce); // spawn 1
+      pb5.update(1.0, gOnce); // ne doit pas respawn tant que le premier est actif
+      assert(addsOnce === 1, 'PizzaBox: ne doit pas tirer plus d\'un projectile à la fois');
+      results.push('PizzaBox single-shot OK');
 
       console.info('%c[Tests OK]', 'color:#7CFC00; font-weight:900;', results.join(' | '));
     } catch (e) {
