@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Pizzéric Invaders (HTML5)</title>
+  <style>
+    /* -------------------------------------------------------------
+       STYLES GÉNÉRAUX & HUD/OVERLAYS
+       ------------------------------------------------------------- */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0b0b14;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: #fff;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none; /* pour éviter les scrolls pendant le jeu */
+    }
+    #wrap {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+    }
+    /* Canvas centré, portrait 720x1280 avec letterboxing */
+    #game {
+      width: min(90vw, 720px);
+      height: calc(min(90vw, 720px) * (1280/720));
+      max-height: 95vh;
+      background: #000;
+      border-radius: 16px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      image-rendering: pixelated;
+      touch-action: none;
+    }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.75);
+      padding: 24px;
+      z-index: 10;
+    }
+    .overlay.active { display: flex; }
+    .panel {
+      width: min(92vw, 420px);
+      background: #14141f;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 20px 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+    }
+    .title { font-size: 26px; font-weight: 900; margin: 4px 0 8px; }
+    .subtitle { color: #ffd27d; margin-bottom: 8px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    input[type="text"] {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: #0f0f18; color: #fff;
+      outline: none;
+    }
+    button {
+      cursor: pointer;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 0;
+      background: linear-gradient(180deg,#ff9654,#ff5d3b);
+      color: #1b0a00;
+      font-weight: 800;
+      box-shadow: 0 6px 18px rgba(255, 107, 53, 0.35);
+    }
+    button.secondary { background: #24243a; color: #fff; box-shadow: none; }
+    .list { margin-top: 10px; }
+    .list .item { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed rgba(255,255,255,0.06); }
+
+    /* HUD in-game */
+    #hud {
+      position: fixed; inset: 12px 12px auto 12px; z-index: 5;
+      display: none; justify-content: space-between; align-items: center;
+      font-weight: 700; font-size: 14px;
+    }
+    #hud.active { display: flex; }
+    .badge { background: rgba(255,255,255,0.12); padding: 6px 10px; border-radius: 999px; }
+    .chip { display:inline-flex; padding:6px 10px; background:#ffe1b5; color:#5a2b00; border-radius: 999px; margin: 4px; font-weight:800; }
+
+    /* Responsive letterbox helper */
+    @media (max-height: 780px) {
+      #game { height: 90vh; width: calc(90vh * (720/1280)); }
+    }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="720" height="1280"></canvas>
+  </div>
+
+  <!-- HUD (score, niveau, nom) -->
+  <div id="hud">
+    <div class="badge" id="hudName">Player</div>
+    <div class="badge">Score: <span id="hudScore">0</span></div>
+    <div class="badge">Lvl <span id="hudLevel">1</span></div>
+  </div>
+
+  <!-- Start Menu -->
+  <div class="overlay active" id="menu">
+    <div class="panel">
+      <div class="title">Pizzéric Invaders</div>
+      <div class="subtitle" id="oneLiner">Cheese the day!</div>
+      <div class="row">
+        <input id="playerName" type="text" placeholder="Votre nom" />
+        <button id="btnStart">Start</button>
+      </div>
+      <div class="list" id="highscores"></div>
+      <div style="opacity:.7; font-size:12px; margin-top:8px">Astuce: glissez le doigt gauche/droite pour piloter le drone. Le tir est automatique.</div>
+    </div>
+  </div>
+
+  <!-- Game Over -->
+  <div class="overlay" id="gameover">
+    <div class="panel">
+      <div class="title" id="goTitle">Drone devoured!</div>
+      <div class="subtitle">Score final: <span id="goScore">0</span></div>
+      <div id="goBadges" style="margin:8px 0"></div>
+      <div class="row" style="justify-content:space-between; margin-top:10px">
+        <button id="btnReplay">Rejouer</button>
+        <button id="btnMenu" class="secondary">Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  /* =============================================================
+     PIZZÉRIC INVADERS - HTML5 Canvas Edition
+     Aucune compilation requise. Ouvrez index.html dans un navigateur.
+
+     - Canvas portrait 720x1280
+     - Contrôle tactile: glisser horizontalement
+     - Tir auto de tranches de pizza
+     - Ennemis: boîtes carnivores, boules de pâte rebondissantes,
+       éclats de sauce tomate rapides
+     - Boss tous les 3 niveaux: pizza géante qui lance des pepperonis
+     - Puissances: Bouclier fromage, Double tranche, Sauce pimentée (rafale)
+     - UI: menu avec nom + meilleurs scores (localStorage), HUD, écran fin
+     - Musique 8-bit et SFX via WebAudio (générés dynamiquement)
+     - Code modulaire et fortement commenté
+  ============================================================= */
+
+  // ---------------------------
+  // Constantes & utilitaires
+  // ---------------------------
+  const W = 720, H = 1280;              // Espace de jeu logique
+  const DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1)); // limiter pour perf
+
+  const ONE_LINERS = [
+    "Cheese the day!",
+    "Slice ‘em all!",
+    "Dough or die!",
+    "In crust we trust!",
+    "Olive you (pas eux)!",
+    "Four à tout!"
+  ];
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const rand = (a,b) => a + Math.random()*(b-a);
+  const chance = p => Math.random() < p;
+
+  // ---------------------------
+  // Audio: WebAudio mini-engine (sons et petite boucle)
+  // ---------------------------
+  class AudioMgr {
+    constructor() {
+      this.ctx = null;
+      this.enabled = false;
+      this.musicTimer = null;
+    }
+    async init() {
+      if (!this.ctx) {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (this.ctx.state === 'suspended') await this.ctx.resume();
+      this.enabled = true;
+    }
+    beep(freq=440, duration=0.08, type='square', gain=0.15) {
+      if (!this.enabled) return;
+      const t = this.ctx.currentTime;
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(gain, t+0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t+duration);
+      o.connect(g).connect(this.ctx.destination);
+      o.start(t); o.stop(t+duration+0.02);
+    }
+    startMusic() {
+      if (!this.enabled || this.musicTimer) return;
+      // Boucle simple en I–V–vi–IV, arpeggio 8-bit
+      const chords = [ [261.63,329.63,392.00], [196.00,246.94,392.00], [220.00,261.63,329.63], [174.61,220.00,349.23] ];
+      let idx = 0;
+      this.musicTimer = setInterval(()=>{
+        const triad = chords[idx % chords.length]; idx++;
+        // 4 notes rapides
+        for (let i=0;i<4;i++) {
+          setTimeout(()=> this.beep(triad[i%3]*2, 0.12, 'square', 0.08), i*140);
+        }
+      }, 560);
+    }
+    stopMusic() { if (this.musicTimer) { clearInterval(this.musicTimer); this.musicTimer = null; } }
+    sfxShoot(){ this.beep(880, 0.06, 'square', 0.09); }
+    sfxHit(){ this.beep(440, 0.06, 'sawtooth', 0.09); }
+    sfxExplode(){ this.beep(120, 0.10, 'square', 0.12); this.beep(80, 0.12, 'sawtooth', 0.08); }
+    sfxPower(){ this.beep(1320, 0.08, 'square', 0.12); }
+  }
+  const audio = new AudioMgr();
+
+  // ---------------------------
+  // Gestion High Scores (localStorage)
+  // ---------------------------
+  const SCORE_KEY = 'pizzeric_scores_v1';
+  function getScores(){
+    try { return JSON.parse(localStorage.getItem(SCORE_KEY) || '[]'); } catch(e){ return []; }
+  }
+  function addScore(name, score){
+    const arr = getScores();
+    arr.push({name, score});
+    arr.sort((a,b)=>b.score-a.score);
+    const top = arr.slice(0,5);
+    localStorage.setItem(SCORE_KEY, JSON.stringify(top));
+  }
+  function renderScores(){
+    const box = document.getElementById('highscores');
+    const arr = getScores();
+    if (!arr.length) { box.innerHTML = '<div style="opacity:.7">Aucun score pour l\'instant</div>'; return; }
+    box.innerHTML = arr.map((s,i)=>`<div class="item"><span>#${i+1} ${s.name}</span><strong>${s.score}</strong></div>`).join('');
+  }
+
+  // ---------------------------
+  // Achievements simples
+  // ---------------------------
+  class Achievements {
+    constructor(){ this.earned = new Set(); }
+    reset(){ this.earned.clear(); }
+    onScore(score){
+      if (score>=200) this.earned.add('Pizzaiolo');
+      if (score>=500) this.earned.add('Express Delivery');
+      if (score>=1200) this.earned.add('Master Cheesemaker');
+    }
+    onLevel(level){ if (level===2) this.earned.add('Échauffement OK'); if (level===3) this.earned.add('Heure de pointe'); }
+  }
+
+  // ---------------------------
+  // Base entité + collisions AABB
+  // ---------------------------
+  class Entity {
+    constructor(x,y,w,h){ this.x=x; this.y=y; this.w=w; this.h=h; this.vx=0; this.vy=0; this.alive=true; this.type='entity'; }
+    get left(){ return this.x - this.w/2; } get right(){ return this.x + this.w/2; }
+    get top(){ return this.y - this.h/2; } get bottom(){ return this.y + this.h/2; }
+    update(dt, game) { this.x += this.vx*dt; this.y += this.vy*dt; }
+    draw(ctx, game) {}
+    hits(other){ return this.alive && other.alive && !(this.right < other.left || this.left > other.right || this.bottom < other.top || this.top > other.bottom); }
+  }
+
+  // ---------------------------
+  // Joueur (drone)
+  // ---------------------------
+  class Player extends Entity {
+    constructor(){ super(W/2, H-110, 120, 80); this.type='player'; this.fireCD=0; this.baseRate=0.25; this.doubleShot=false; this.rapid=false; this.shield=false; this.dead=false; }
+    reset(){ this.x=W/2; this.y=H-110; this.doubleShot=false; this.rapid=false; this.shield=false; this.dead=false; }
+    update(dt, game){ if (this.dead) return; this.fireCD-=dt; const rate = this.rapid ? 0.08 : this.baseRate; if (this.fireCD<=0){ this.fire(game); this.fireCD=rate; } }
+    fire(game){
+      const add = (dx=0)=> game.add(new PizzaSlice(this.x+dx, this.y - this.h/2));
+      add(0);
+      if (this.doubleShot){ add(-26); add(26); }
+      audio.sfxShoot();
+    }
+    hit(game){ if (this.shield){ this.shield=false; audio.sfxHit(); return; } if (!this.dead){ this.dead=true; this.alive=false; audio.sfxExplode(); game.gameOver(false); } }
+    draw(ctx){
+      // Quadcopter 4 hélices (design proche du visuel)
+      ctx.save(); ctx.translate(this.x, this.y);
+      // bras en croix
+      ctx.strokeStyle='#364a5c'; ctx.lineWidth=6; ctx.beginPath();
+      ctx.moveTo(-36,0); ctx.lineTo(36,0);
+      ctx.moveTo(0,-28); ctx.lineTo(0,28);
+      ctx.stroke();
+      // corps central
+      ctx.fillStyle='#dfefff'; ctx.strokeStyle='#2b3d52'; ctx.lineWidth=3; roundRect(ctx,-24,-14,48,28,10,true,true);
+      // yeux
+      ctx.fillStyle='#fff'; circle(ctx,-8,2,6,true); circle(ctx,8,2,6,true);
+      ctx.fillStyle='#000'; circle(ctx,-6,3,2.5,true); circle(ctx,10,3,2.5,true);
+      // rotors (4 coins)
+      const rotor=(px,py)=>{ ctx.save(); ctx.translate(px,py); ctx.fillStyle='#5a606a'; circle(ctx,0,0,10,true); ctx.globalAlpha=0.6; ctx.fillStyle='#cbd3e6';
+        sector(ctx,0,0,22,0,1.2); sector(ctx,0,0,22,Math.PI,Math.PI+1.2); ctx.globalAlpha=1; ctx.restore(); };
+      rotor(-46,-32); rotor(46,-32); rotor(-46,32); rotor(46,32);
+      // bouclier visuel
+      if (this.shield){ ctx.strokeStyle='rgba(255,255,180,0.8)'; ctx.lineWidth=4; circle(ctx,0,4,56,false,true); }
+      ctx.restore();
+    }
+  }
+
+  // ---------------------------
+  // Projectiles
+  // ---------------------------
+  class PizzaSlice extends Entity {
+    constructor(x,y){ super(x,y,18,18); this.vy = -420; this.type='playerBullet'; }
+    draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); // triangle fromage
+      ctx.fillStyle='#ffe178'; ctx.strokeStyle='#b57a3f'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(-12,12); ctx.lineTo(12,12); ctx.closePath(); ctx.fill(); ctx.stroke();
+      // croûte
+      ctx.fillStyle='#c88a45'; ctx.fillRect(-8,8,16,4);
+      // pepperonis
+      ctx.fillStyle='#c63d3d'; circle(ctx,-4,0,3,true); circle(ctx,4,-4,3,true);
+      ctx.restore(); }
+  }
+  /* Nouveau: jets de sauce en arc avec gravité et traînée */
+  class SauceBlast extends Entity {
+    constructor(x,y){
+      super(x,y,22,22);
+      this.vx = rand(-140, 140);
+      this.vy = rand(140, 220);
+      this.g  = 260; // gravité
+      this.type='hazard';
+      this.trail = [];
+      this.maxTrail = 8;
+      this.angle = 0;
+    }
+    update(dt, game){
+      this.vy += this.g * dt;
+      this.x  += this.vx * dt;
+      this.y  += this.vy * dt;
+      this.angle = Math.atan2(this.vy, this.vx);
+      this.trail.push({x:this.x, y:this.y});
+      if (this.trail.length > this.maxTrail) this.trail.shift();
+    }
+    draw(ctx){
+      // traînée de gouttes
+      ctx.save();
+      ctx.fillStyle = '#cc2a2a';
+      for (let i=0;i<this.trail.length;i++){
+        const t = this.trail[i];
+        const r = 6 * (i / this.trail.length);
+        ctx.globalAlpha = 0.15 + 0.65 * (i/this.trail.length);
+        circle(ctx, t.x, t.y, r, true, false);
+      }
+      ctx.globalAlpha = 1;
+      // tête du jet (splash)
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.angle);
+      ctx.fillStyle='#d12d2d';
+      ctx.beginPath();
+      ctx.moveTo(-10, -6);
+      ctx.quadraticCurveTo(0, -10, 10, -2);
+      ctx.quadraticCurveTo(12, 2, 8, 6);
+      ctx.quadraticCurveTo(0, 10, -8, 6);
+      ctx.closePath();
+      ctx.fill();
+      // petites gouttes frontales
+      ctx.fillStyle='#ff5a5a';
+      circle(ctx, -6, 2, 2.5, true);
+      circle(ctx, 3, 0, 2, true);
+      ctx.restore();
+    }
+  }
+  class PepperoniBomb extends Entity {
+    constructor(x,y,vx,vy){ super(x,y,28,28); this.vx=vx; this.vy=vy; this.type='hazard'; }
+    draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); ctx.fillStyle='#d94242'; circle(ctx,0,0,12,true); ctx.strokeStyle='#5a0000'; ctx.lineWidth=3; circle(ctx,0,0,12,false,true); ctx.restore(); }
+  }
+
+  // ---------------------------
+  // Ennemis
+  // ---------------------------
+  class Enemy extends Entity { constructor(x,y,w,h){ super(x,y,w,h); this.hp=1; this.score=10; this.type='enemy'; }
+    damage(game, d=1){ this.hp-=d; if (this.hp<=0){ this.alive=false;
+        if (game && typeof game.addScore === 'function') { game.addScore(this.score); }
+        if (game && typeof game.spawnPowerUp === 'function' && chance(0.15)) { game.spawnPowerUp(this.x, this.y); }
+      }
+    }
+  }
+  /* Nouveau: boîtes redesign + bouche animée + yeux méchants */
+  class PizzaBoxEnemy extends Enemy {
+    constructor(x,y,speed){ super(x,y,120,100); this.speed=speed; this.timer=0; this.open=false; this.hp=3; this.score=50; this.mouth=0; this.lidOffsetY=0; }
+    update(dt, game){
+      this.y += this.speed*dt;
+      this.timer+=dt; if (this.timer>0.4){ this.timer=0; this.open=!this.open; } // conserve le toggle pour le test
+      // animation douce d'ouverture/fermeture (de face): on déplace le couvercle verticalement
+      const target = this.open ? 1 : 0; const rate = 4; // vitesse d'interpolation
+      this.mouth += (target - this.mouth) * Math.min(1, dt*rate);
+      this.mouth = clamp(this.mouth, 0, 1);
+      this.lidOffsetY = -36 * this.mouth; // 0 fermé, -36 complètement ouvert
+      if (this.top>H+80) this.alive=false;
+    }
+    draw(ctx){
+      ctx.save(); ctx.translate(this.x,this.y);
+      // Palette inspirée du visuel (rouge/or + gros contours)
+      const EDGE = '#ffd54f';
+      const RED  = '#e53935';
+      const REDD = '#b71c1c';
+      const DARK = '#0a0a12';
+
+      // --- BASE (mâchoire inférieure)
+      // bord extérieur jaune
+      ctx.fillStyle = EDGE; roundRect(ctx, -62, 16, 124, 54, 6, true, false);
+      // remplissage rouge
+      ctx.fillStyle = RED; roundRect(ctx, -58, 20, 116, 46, 4, true, false);
+      // ombre intérieure (gorge)
+      ctx.fillStyle = REDD; roundRect(ctx, -52, 30, 104, 22, 4, true, false);
+      // dents inférieures (triangles qui montent)
+      ctx.fillStyle = '#ffffff';
+      for (let i=-42; i<=42; i+=14){ ctx.beginPath(); ctx.moveTo(i, 30); ctx.lineTo(i+7, 18); ctx.lineTo(i+14, 30); ctx.closePath(); ctx.fill(); }
+
+      // --- COUVERCLE (mâchoire supérieure) en translation verticale (de face)
+      ctx.save(); ctx.translate(0, 30 + this.lidOffsetY);
+      // contour jaune
+      ctx.fillStyle = EDGE; ctx.beginPath();
+      ctx.moveTo(-62, 0); ctx.lineTo(62, 0); ctx.lineTo(50, -34); ctx.lineTo(-50, -34); ctx.closePath(); ctx.fill();
+      // panneau rouge
+      ctx.fillStyle = RED; ctx.beginPath();
+      ctx.moveTo(-58, -2); ctx.lineTo(58, -2); ctx.lineTo(46, -30); ctx.lineTo(-46, -30); ctx.closePath(); ctx.fill();
+      // dents supérieures (triangles vers le bas le long du bord inférieur)
+      ctx.fillStyle = '#ffffff';
+      for (let i=-42; i<=42; i+=14){ ctx.beginPath(); ctx.moveTo(i, -2); ctx.lineTo(i+7, 10); ctx.lineTo(i+14, -2); ctx.closePath(); ctx.fill(); }
+      // yeux méchants (grand aplatis, jaunes, avec sourcils noirs)
+      // oeil gauche
+      ctx.save(); ctx.translate(-22, -18); 
+      ctx.fillStyle = '#ffeb3b'; ctx.beginPath();
+      ctx.moveTo(-12, 0); ctx.quadraticCurveTo(-2, -8, 12, -2); ctx.quadraticCurveTo(6, 6, -12, 4); ctx.closePath(); ctx.fill();
+      // pupille
+      ctx.fillStyle = '#ff9800'; circle(ctx, 4, -2, 3, true, false);
+      // sourcil
+      ctx.fillStyle = DARK; ctx.beginPath(); ctx.moveTo(-14, -6); ctx.lineTo(14, -12); ctx.lineTo(12, -4); ctx.lineTo(-16, 2); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      // oeil droit
+      ctx.save(); ctx.translate(22, -18); 
+      ctx.fillStyle = '#ffeb3b'; ctx.beginPath();
+      ctx.moveTo(-12, -2); ctx.quadraticCurveTo(2, -10, 12, -2); ctx.quadraticCurveTo(6, 6, -12, 4); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ff9800'; circle(ctx, 2, -2, 3, true, false);
+      ctx.fillStyle = DARK; ctx.beginPath(); ctx.moveTo(-16, -10); ctx.lineTo(14, -6); ctx.lineTo(12, 0); ctx.lineTo(-18, -4); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.restore(); // fin couvercle
+
+      // petits liserés sur les arêtes (pincées jaunes/rouges)
+      ctx.strokeStyle = EDGE; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-60, 16); ctx.lineTo(60, 16); ctx.stroke();
+      ctx.strokeStyle = REDD; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-58, 18); ctx.lineTo(58, 18); ctx.stroke();
+
+      ctx.restore();
+    }
+  }
+  class DoughBallEnemy extends Enemy {
+    constructor(x,y,vx,vy){ super(x,y,70,70); this.vx=vx; this.vy=vy; this.hp=2; this.score=30; }
+    update(dt, game){ this.x+=this.vx*dt; this.y+=this.vy*dt; if (this.x<35 || this.x>W-35) this.vx = -this.vx; if (this.top>H+80) this.alive=false; }
+    draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); ctx.fillStyle='#f5e1b4'; ctx.strokeStyle='#b49c78'; ctx.lineWidth=3; circle(ctx,0,0,32,true,true); ctx.fillStyle='#dec89f'; for(let i=0;i<8;i++){ circle(ctx,rand(-22,22),rand(-20,20),2,true); } ctx.restore(); }
+  }
+  class BossPizza extends Enemy {
+    constructor(game){ super(W/2, 220, 240, 240); this.hp=40; this.score=400; this.angle=0; this.fireCD=1.2; this.burst=0; this.burstGap=0.22; this.vx=60; this.dir=1; this.game=game; this.type='boss'; }
+    update(dt, game){
+      // déplacement lent gauche ↔ droite
+      this.x += this.vx * this.dir * dt;
+      if (this.x < 120) { this.x = 120; this.dir = 1; }
+      if (this.x > W-120) { this.x = W-120; this.dir = -1; }
+      // légère rotation
+      this.angle = (this.angle + 0.4*dt) % (Math.PI*2);
+      // Rafale de 3 rangées, 3 projectiles par rangée
+      this.fireCD -= dt;
+      if (this.fireCD <= 0){
+        const speed = 220 + game.level*15;
+        const spread = 80;
+        for (let i=-1; i<=1; i++){
+          game.add(new PepperoniBomb(this.x + i*18, this.y + this.h/2 - 10, i*spread, speed));
+        }
+        this.burst++;
+        if (this.burst < 3){ this.fireCD = this.burstGap; } else { this.burst = 0; this.fireCD = 1.4; }
+      }
+    }
+    draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); ctx.rotate(this.angle*0.5);
+      // base fromage + croûte
+      ctx.fillStyle='#ffe178'; ctx.strokeStyle='#b57a3f'; ctx.lineWidth=8; circle(ctx,0,0,110,true,true);
+      ctx.strokeStyle='#c88a45'; ctx.lineWidth=16; circle(ctx,0,0,120,false,true);
+      // pepperonis
+      ctx.fillStyle='#c63d3d'; for(let a=0; a<Math.PI*2; a+=Math.PI/6){ const r=70; const px=r*Math.cos(a), py=r*Math.sin(a); circle(ctx,px,py,14,true); }
+      // olives noires (anneaux)
+      ctx.lineWidth=4; ctx.strokeStyle='#000';
+      for(let a=Math.PI/12; a<Math.PI*2; a+=Math.PI/5){ const r=60; const px=r*Math.cos(a), py=r*Math.sin(a); circle(ctx,px,py,6,false,true); ctx.fillStyle='#ffe178'; circle(ctx,px,py,3,true,false); }
+      // poivrons verts (arcs croquants)
+      ctx.strokeStyle='#2e7d32'; ctx.lineWidth=5; ctx.beginPath();
+      for(let a=0; a<Math.PI*2; a+=Math.PI/3){ const r=50; const px=r*Math.cos(a), py=r*Math.sin(a); ctx.moveTo(px,py); ctx.arc(px,py,10,a+0.2,a+1.2); }
+      ctx.stroke();
+      ctx.restore(); }
+    damage(game, d=1){ super.damage(game,d); if (this.hp<=0){ this.alive=false; game.onBossDefeated(); } }
+  }
+
+  // ---------------------------
+  // Power-ups
+  // ---------------------------
+  class PowerUp extends Entity { constructor(x,y){ super(x,y,60,60); this.type='powerup'; }
+    apply(player, game){}
+    drawBase(ctx, color, label){ ctx.save(); ctx.translate(this.x,this.y); ctx.fillStyle=color; ctx.strokeStyle='#000'; ctx.lineWidth=3; roundRect(ctx,-25,-25,50,50,10,true,true); ctx.fillStyle='#000'; ctx.font='bold 16px system-ui'; ctx.fillText(label, -14, 6); ctx.restore(); }
+  }
+  class PUShield extends PowerUp { draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); // icône bouclier
+      ctx.fillStyle='#fff3a1'; circle(ctx,0,0,22,true); ctx.strokeStyle='#000'; ctx.lineWidth=3; circle(ctx,0,0,22,false,true);
+      ctx.strokeStyle='#c09f00'; ctx.lineWidth=4; circle(ctx,0,0,14,false,true); ctx.restore(); } apply(p){ p.shield=true; audio.sfxPower(); } }
+  class PUDouble extends PowerUp { draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); // icône double tranche
+      ctx.fillStyle='#c6f6ff'; circle(ctx,0,0,22,true); ctx.strokeStyle='#000'; ctx.lineWidth=3; circle(ctx,0,0,22,false,true);
+      ctx.fillStyle='#ffe178'; ctx.strokeStyle='#b57a3f'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(-6,-4); ctx.lineTo(-14,10); ctx.lineTo(2,10); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(10,-4); ctx.lineTo(2,10); ctx.lineTo(18,10); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle='#c63d3d'; circle(ctx,-3,3,2,true); circle(ctx,12,1,2,true);
+      ctx.restore(); } apply(p, game){ p.doubleShot=true; audio.sfxPower(); setTimeout(()=>p.doubleShot=false, 6000); } }
+  class PUSauce extends PowerUp { draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); // icône flamme
+      ctx.fillStyle='#ffb5b5'; circle(ctx,0,0,22,true); ctx.strokeStyle='#000'; ctx.lineWidth=3; circle(ctx,0,0,22,false,true);
+      ctx.fillStyle='#e3452d'; ctx.beginPath(); ctx.moveTo(0,-8); ctx.bezierCurveTo(8,-2,6,6,0,10); ctx.bezierCurveTo(-6,6,-4,-2,0,-8); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#ffdf8a'; ctx.beginPath(); ctx.moveTo(0,-2); ctx.bezierCurveTo(3,1,2,4,0,6); ctx.bezierCurveTo(-2,4,-1,1,0,-2); ctx.closePath(); ctx.fill();
+      ctx.restore(); } apply(p, game){ p.rapid=true; audio.sfxPower(); setTimeout(()=>p.rapid=false, 4000); } }
+
+  // ---------------------------
+  // Fond / backgrounds (dégradés pré-rasterisés)
+  // ---------------------------
+  function makeBackground(kind){
+    const off = document.createElement('canvas'); off.width=W; off.height=H; const g=off.getContext('2d');
+    const grad = g.createLinearGradient(0,0,0,H);
+    if (kind==='kitchen') { grad.addColorStop(0,'#ffe6b4'); grad.addColorStop(1,'#ff8c5a'); }
+    if (kind==='city')    { grad.addColorStop(0,'#87CEEB'); grad.addColorStop(1,'#191970'); }
+    if (kind==='space')   { grad.addColorStop(0,'#050514'); grad.addColorStop(1,'#0f1038'); }
+    g.fillStyle=grad; g.fillRect(0,0,W,H);
+    if (kind==='space') { g.fillStyle='rgba(255,255,255,0.8)'; for(let i=0;i<120;i++){ g.beginPath(); const x=rand(0,W), y=rand(0,H); g.arc(x,y,rand(0.5,1.5),0,Math.PI*2); g.fill(); } }
+    return off;
+  }
+
+  // ---------------------------
+  // Dessin helpers
+  // ---------------------------
+  function circle(ctx,x,y,r,fill=false,stroke=false){ ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); if (fill) ctx.fill(); if (stroke) ctx.stroke(); }
+  function sector(ctx,x,y,r,a0,a1){ ctx.beginPath(); ctx.moveTo(x,y); ctx.arc(x,y,r,a0,a1); ctx.closePath(); ctx.fill(); }
+  function roundRect(ctx,x,y,w,h,r,fill=false,stroke=false){ const rr=r; ctx.beginPath(); ctx.moveTo(x+rr,y); ctx.arcTo(x+w,y,x+w,y+h,rr); ctx.arcTo(x+w,y+h,x,y+h,rr); ctx.arcTo(x,y+h,x,y,rr); ctx.arcTo(x,y,x+w,y,rr); ctx.closePath(); if (fill) ctx.fill(); if (stroke) ctx.stroke(); }
+
+  // ---------------------------
+  // Gestion du jeu principal
+  // ---------------------------
+  class Game {
+    constructor(){
+      this.canvas = document.getElementById('game');
+      this.ctx = this.canvas.getContext('2d');
+      this.entities = [];   // Tout ce qui bouge sauf joueur
+      this.player = new Player();
+      this.lastTime = 0; this.acc=0;
+      this.running=false; this.state='menu';
+      this.level=1; this.elapsed=0; this.levelDur=10; this.bossActive=false; this.victory=false;
+      this.score=0; this.rng=Math.random; this.ach=new Achievements();
+      // spawns
+      this.tBox=1.2; this.tDough=1.6; this.tSauce=2.0;
+      // backgrounds cycliques
+      this.bgs=[makeBackground('kitchen'), makeBackground('city'), makeBackground('space')];
+      this.bgIndex=0;
+      // input pointer x
+      this.pointerX = null;
+      this.bindInput();
+    }
+    bindInput(){
+      const toX=(ev)=>{ const rect=this.canvas.getBoundingClientRect(); const sx=this.canvas.width/this.canvas.clientWidth; return (ev.clientX - rect.left)*sx; };
+      const setX=(x)=>{ this.player.x = clamp(x, this.player.w/2, W - this.player.w/2); };
+      const onPoint=(ev)=>{ if (ev.touches && ev.touches[0]) ev = ev.touches[0]; setX(toX(ev)); };
+      ['pointerdown','pointermove'].forEach(t=> this.canvas.addEventListener(t, onPoint, {passive:false}));
+      this.canvas.addEventListener('touchstart', onPoint, {passive:false});
+      this.canvas.addEventListener('touchmove', onPoint, {passive:false});
+      // Souris : clic maintenu
+      let mouseDown=false;
+      this.canvas.addEventListener('mousedown', (e)=>{ mouseDown=true; onPoint(e); });
+      window.addEventListener('mouseup', ()=> mouseDown=false);
+      window.addEventListener('mousemove', (e)=>{ if(mouseDown) onPoint(e); });
+    }
+    start(name){
+      this.playerName = name || 'Player';
+      this.reset();
+      this.state='playing';
+      this.running=true;
+      document.getElementById('hud').classList.add('active');
+      document.getElementById('hudName').textContent = this.playerName;
+      audio.startMusic();
+      requestAnimationFrame((t)=>this.loop(t));
+    }
+    reset(){
+      this.entities.length=0; this.player.reset();
+      this.score=0; this.level=1; this.elapsed=0; this.victory=false; this.bossActive=false; this.bgIndex=0; this.ach.reset();
+      this.tBox=1.2; this.tDough=1.6; this.tSauce=2.0;
+      document.getElementById('hudScore').textContent = '0';
+      document.getElementById('hudLevel').textContent = '1';
+    }
+    add(e){ this.entities.push(e); }
+    addScore(s){ this.score+=s; document.getElementById('hudScore').textContent = this.score; this.ach.onScore(this.score); }
+    spawnPizzaBox(){ const x=rand(70, W-70); this.add(new PizzaBoxEnemy(x, -40, 80 + this.level*10)); }
+    spawnDoughBall(){ const x=rand(35, W-35); const vx = (Math.random()<0.5?-1:1)*(80 + this.level*8); this.add(new DoughBallEnemy(x, -35, vx, 120 + this.level*10)); }
+    spawnSauceBlast(){ const x=rand(10, W-10); this.add(new SauceBlast(x, -10)); }
+    spawnBoss(){ this.bossActive=true; this.add(new BossPizza(this)); }
+    onBossDefeated(){ this.bossActive=false; this.addScore(500); this.victory=true; this.gameOver(true); }
+    spawnPowerUp(x,y){ const r=Math.random(); if (r<0.33) this.add(new PUShield(x,y)); else if (r<0.66) this.add(new PUDouble(x,y)); else this.add(new PUSauce(x,y)); }
+
+    gameOver(victory){
+      this.state='gameover'; this.running=false;
+      document.getElementById('hud').classList.remove('active');
+      audio.stopMusic();
+      addScore(this.playerName, this.score);
+      // Écran fin
+      document.getElementById('goTitle').textContent = victory ? 'Livraison réussie !' : 'Drone dévoré !';
+      document.getElementById('goScore').textContent = this.score;
+      const badges = document.getElementById('goBadges'); badges.innerHTML='';
+      for (const b of this.ach.earned) { const el=document.createElement('span'); el.className='chip'; el.textContent=b; badges.appendChild(el); }
+      document.getElementById('gameover').classList.add('active');
+    }
+
+    update(dt){
+      if (this.state!=='playing') return;
+      // Spawns qui montent avec la difficulté
+      const mult = 1 + (this.level - 1) * 0.2;
+      this.tBox -= dt*mult; this.tDough -= dt*mult; this.tSauce -= dt*mult;
+      if (!this.bossActive) {
+        if (this.tBox<=0){ this.spawnPizzaBox(); this.tBox = 1.4 + Math.random()*0.8; }
+        if (this.tDough<=0){ this.spawnDoughBall(); this.tDough = 1.8 + Math.random()*1.0; }
+        if (this.tSauce<=0){ this.spawnSauceBlast(); this.tSauce = Math.max(0.9, 2.0 - this.level*0.1) + Math.random()*0.6; }
+      }
+      // Progression de niveau et boss toutes 3 vagues
+      this.elapsed += dt;
+      if (!this.bossActive && this.elapsed >= this.levelDur) {
+        this.elapsed = 0; this.level++; document.getElementById('hudLevel').textContent = this.level; this.ach.onLevel(this.level);
+        this.bgIndex = (this.level-1)%3; // changer de décor
+        if (this.level % 3 === 0) this.spawnBoss();
+      }
+
+      // Update entités
+      this.player.update(dt, this);
+      for (const e of this.entities) e.update(dt, this);
+
+      // Collisions
+      for (const e of this.entities) {
+        if (!e.alive) continue;
+        if (e instanceof Enemy || e.type==='boss'){
+          // Tir joueur vs ennemi
+          for (const b of this.entities) if (b.type==='playerBullet' && b.alive && b.hits(e)) { b.alive=false; e.damage(this,1); audio.sfxHit(); }
+          // Ennemi vs joueur
+          if (this.player.alive && e.hits(this.player)) { e.alive=false; this.player.hit(this); }
+        }
+        if (e.type==='hazard'){
+          if (this.player.alive && e.hits(this.player)) { e.alive=false; this.player.hit(this); }
+        }
+        if (e.type==='powerup'){
+          if (this.player.alive && e.hits(this.player)) { e.alive=false; e.apply(this.player, this); }
+        }
+      }
+      // Nettoyage
+      this.entities = this.entities.filter(e=>{
+        if (!e.alive) return false;
+        if (e.bottom < -120 || e.top > H+140 || e.right < -120 || e.left > W+120) return false;
+        return true;
+      });
+    }
+
+    draw(){
+      // Fond
+      this.ctx.drawImage(this.bgs[this.bgIndex], 0, 0);
+      // Entités
+      for (const e of this.entities) e.draw(this.ctx, this);
+      this.player.draw(this.ctx, this);
+    }
+
+    loop(t){
+      if (!this.running) return;
+      const now = t * 0.001; const dt = Math.min(0.033, now - (this.lastTime||now)); this.lastTime = now;
+      this.update(dt); this.draw();
+      requestAnimationFrame((t)=>this.loop(t));
+    }
+  }
+
+  // ---------------------------
+  // App / Menus
+  // ---------------------------
+  const game = new Game();
+  const elMenu = document.getElementById('menu');
+  const elGameOver = document.getElementById('gameover');
+  const elBtnStart = document.getElementById('btnStart');
+  const elBtnReplay = document.getElementById('btnReplay');
+  const elBtnMenu = document.getElementById('btnMenu');
+  const inputName = document.getElementById('playerName');
+
+  function showMenu(){ elMenu.classList.add('active'); elGameOver.classList.remove('active'); document.getElementById('hud').classList.remove('active'); renderScores(); document.getElementById('oneLiner').textContent=ONE_LINERS[Math.floor(Math.random()*ONE_LINERS.length)]; }
+
+  elBtnStart.addEventListener('click', async ()=>{ await audio.init(); audio.startMusic(); const name = (inputName.value||'Player').trim(); elMenu.classList.remove('active'); game.start(name); });
+  elBtnReplay.addEventListener('click', ()=>{ elGameOver.classList.remove('active'); showMenu(); });
+  elBtnMenu.addEventListener('click', ()=>{ elGameOver.classList.remove('active'); showMenu(); });
+
+  // Init UI
+  showMenu();
+
+  // ------------------------------------------------------------
+  // TESTS (exécutés au chargement, n'affectent pas le gameplay)
+  // ------------------------------------------------------------
+  (function runUnitTests(){
+    const results = [];
+    const assert = (cond, msg)=>{ if(!cond) throw new Error(msg); };
+    try {
+      // Test AABB collisions
+      const a = new Entity(10,10,10,10), b = new Entity(15,10,10,10), c = new Entity(40,40,10,10);
+      assert(a.hits(b) === true, 'Collision AABB doit être vraie');
+      assert(a.hits(c) === false, 'Collision AABB doit être fausse');
+      results.push('AABB OK');
+
+      // Test Boss pattern: 3 rafales × 3 projectiles = 9, puis pause
+      const mock = { level:1, adds:0, add:(x)=>{ mock.adds++; }, onBossDefeated:()=>{} };
+      const boss = new BossPizza(mock);
+      boss.fireCD = 0; // force tir immédiat
+      boss.update(0.01, mock); // 1ère rangée
+      assert(mock.adds===3, 'Boss: 1ère rangée doit tirer 3 projectiles');
+      boss.update(boss.burstGap, mock); // 2e rangée
+      assert(mock.adds===6, 'Boss: 2e rangée cumulative 6');
+      boss.update(boss.burstGap, mock); // 3e rangée
+      assert(mock.adds===9, 'Boss: 3e rangée cumulative 9');
+      const before = mock.adds;
+      boss.update(0.5, mock); // dans la pause 1.4s, ne doit pas tirer
+      assert(mock.adds===before, 'Boss: pause après 3 rangées (pas de tir)');
+      results.push('Boss pattern OK');
+
+      // Test Boss damageable / onBossDefeated appelé
+      let defeated=false; const mock2={ onBossDefeated:()=>{ defeated=true; }, level:1, add:()=>{} };
+      const boss2 = new BossPizza(mock2);
+      const hp0 = boss2.hp; boss2.damage(mock2, 1); assert(boss2.hp===hp0-1, 'Boss: damage décrémente HP');
+      boss2.damage(mock2, 999); // tue le boss
+      assert(defeated===true, 'Boss: onBossDefeated appelé');
+      results.push('Boss damage OK');
+
+      // Test Enemy.damage ne plante pas si game.addScore absent
+      const mock3 = {}; const e1 = new Enemy(0,0,10,10); e1.damage(mock3, 999);
+      assert(e1.alive===false, 'Enemy.damage: doit tuer même sans addScore');
+      results.push('Enemy.damage robuste OK');
+
+      // Test PizzaBox: toggle ouverture/fermeture
+      const pb = new PizzaBoxEnemy(100, -40, 100);
+      const wasOpen = pb.open; pb.update(0.41, {}); // > 0.4s -> toggle
+      assert(pb.open !== wasOpen, 'PizzaBox: état open doit toggler');
+      results.push('PizzaBox toggle OK');
+
+      // Tests supplémentaires
+      // SauceBlast: la gravité doit augmenter la vitesse verticale
+      const s = new SauceBlast(0,0); const vy0 = s.vy; s.update(0.5, {});
+      assert(s.vy > vy0, 'SauceBlast: gravity augmente la vitesse verticale');
+      results.push('SauceBlast gravité OK');
+
+      // PizzaBox: l'animation de bouche se dirige vers la cible
+      const pb2 = new PizzaBoxEnemy(100,-40,100); const m0 = pb2.mouth; pb2.open = true; pb2.update(0.2, {});
+      assert(pb2.mouth >= m0, 'PizzaBox: mouth doit augmenter vers open');
+      const m1 = pb2.mouth; pb2.open = false; pb2.update(0.2, {});
+      assert(pb2.mouth <= m1, 'PizzaBox: mouth doit diminuer vers fermé');
+      results.push('PizzaBox mouth anim OK');
+
+      // PizzaBox: le décalage vertical du couvercle est négatif quand ouvert
+      const pb3 = new PizzaBoxEnemy(100,-40,100); pb3.open = true; pb3.update(0.2, {});
+      assert(pb3.lidOffsetY <= 0, 'PizzaBox: lidOffsetY doit être négatif en ouverture');
+      const off1 = pb3.lidOffsetY; pb3.open = false; pb3.update(0.2, {});
+      assert(pb3.lidOffsetY > off1, 'PizzaBox: lidOffsetY doit remonter vers 0 en fermeture');
+      results.push('PizzaBox lidOffsetY OK');
+
+      console.info('%c[Tests OK]', 'color:#7CFC00; font-weight:900;', results.join(' | '));
+    } catch (e) {
+      console.error('[Tests FAILED]', e && e.message ? e.message : e);
+    }
+  })();
+
+  </script>
+</body>
+</html>
