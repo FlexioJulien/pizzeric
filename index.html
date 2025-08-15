@@ -371,6 +371,22 @@
     draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); ctx.fillStyle='#d94242'; circle(ctx,0,0,12,true); ctx.strokeStyle='#5a0000'; ctx.lineWidth=3; circle(ctx,0,0,12,false,true); ctx.restore(); }
   }
 
+  // Petit effet d'explosion quand un tir touche un ennemi
+  class HitSpark extends Entity {
+    constructor(x,y,color='#ffd54f'){
+      super(x,y,1,1); this.type='fx'; this.life=0.35; this.color=color; this.parts=[];
+      // plus d'étincelles
+      for(let i=0;i<16;i++){ const a=Math.random()*Math.PI*2; const sp=rand(60,180);
+        this.parts.push({x:0,y:0,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:rand(1.4,3.6)});
+      }
+    }
+    update(dt){
+      this.life -= dt; if (this.life<=0) { this.alive=false; return; }
+      for(const p of this.parts){ p.vy += 120*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.r = Math.max(0, p.r - dt*3); }
+    }
+    draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); ctx.globalAlpha = clamp(this.life/0.35,0,1); ctx.fillStyle=this.color; for(const p of this.parts){ circle(ctx,p.x,p.y,p.r,true,false);} ctx.restore(); }
+  }
+
   // ---------------------------
   // Ennemis
   // ---------------------------
@@ -381,82 +397,78 @@
       }
     }
   }
-  /* Nouveau: boîtes redesign + bouche animée + yeux méchants */
+  /* Nouveau: boîtes redesign + bouche animée (de face) + yeux agressifs */
   class PizzaBoxEnemy extends Enemy {
-    constructor(x,y,speed){ super(x,y,120,100); this.speed=speed; this.timer=0; this.open=false; this.hp=3; this.score=50; this.mouth=0; this.lidOffsetY=0; }
+    constructor(x,y,speed){ super(x,y,120,100); this.speed=speed; this.timer=0; this.open=false; this.hp=3; this.score=50; this.mouth=0; this.lidOffsetY=0; this.lastOpen=false; this.openFireCD=0; this.hasActiveSauce=false; }
     update(dt, game){
       this.y += this.speed*dt;
-      this.timer+=dt; if (this.timer>0.4){ this.timer=0; this.open=!this.open; } // conserve le toggle pour le test
+      this.timer+=dt; if (this.timer>0.4){ this.timer=0; this.open=!this.open; }
       // animation douce d'ouverture/fermeture (de face): on déplace le couvercle verticalement
       const target = this.open ? 1 : 0; const rate = 4; // vitesse d'interpolation
       this.mouth += (target - this.mouth) * Math.min(1, dt*rate);
       this.mouth = clamp(this.mouth, 0, 1);
       this.lidOffsetY = -36 * this.mouth; // 0 fermé, -36 complètement ouvert
+
+      // Tir de sauce : **un seul projectile à la fois**
+      if (this.open && !this.lastOpen && game && typeof game.add==='function' && !this.hasActiveSauce){
+        const sb = new SauceBlast(this.x + rand(-18,18), this.y + 38);
+        sb.owner = this; sb.onRemove = ()=>{ if (sb.owner) sb.owner.hasActiveSauce = false; };
+        game.add(sb); this.hasActiveSauce = true; this.openFireCD = 0.6 + Math.random()*0.2;
+      }
+      if (this.open && game && typeof game.add==='function'){
+        this.openFireCD -= dt;
+        if (this.openFireCD<=0 && !this.hasActiveSauce){
+          const sb = new SauceBlast(this.x + rand(-24,24), this.y + 38);
+          sb.owner = this; sb.onRemove = ()=>{ if (sb.owner) sb.owner.hasActiveSauce = false; };
+          game.add(sb); this.hasActiveSauce = true; this.openFireCD = 0.6 + Math.random()*0.3;
+        }
+      }
+      this.lastOpen = this.open;
+
       if (this.top>H+80) this.alive=false;
     }
     draw(ctx){
       ctx.save(); ctx.translate(this.x,this.y);
-      // Palette inspirée du visuel (rouge/or + gros contours)
       const EDGE = '#ffd54f';
       const RED  = '#e53935';
       const REDD = '#b71c1c';
       const DARK = '#0a0a12';
 
-      // --- BASE (mâchoire inférieure)
-      // bord extérieur jaune
-      ctx.fillStyle = EDGE; roundRect(ctx, -62, 16, 124, 54, 6, true, false);
-      // remplissage rouge
-      ctx.fillStyle = RED; roundRect(ctx, -58, 20, 116, 46, 4, true, false);
-      // ombre intérieure (gorge)
-      ctx.fillStyle = REDD; roundRect(ctx, -52, 30, 104, 22, 4, true, false);
+      // --- BASE (mâchoire inférieure) – hauteur divisée par 2 et uniquement rouge foncé visible
+      const yBase = 38;
+      ctx.fillStyle = EDGE; roundRect(ctx, -62, 28, 124, 27, 6, true, false); // contour
+      ctx.fillStyle = REDD; roundRect(ctx, -52, yBase, 104, 14, 4, true, false); // bande foncée uniquement
       // dents inférieures (triangles qui montent)
       ctx.fillStyle = '#ffffff';
-      for (let i=-42; i<=42; i+=14){ ctx.beginPath(); ctx.moveTo(i, 30); ctx.lineTo(i+7, 18); ctx.lineTo(i+14, 30); ctx.closePath(); ctx.fill(); }
+      for (let i=-42; i<=42; i+=14){ ctx.beginPath(); ctx.moveTo(i, yBase); ctx.lineTo(i+7, yBase-12); ctx.lineTo(i+14, yBase); ctx.closePath(); ctx.fill(); }
 
       // --- COUVERCLE (mâchoire supérieure) en translation verticale (de face)
-      ctx.save(); ctx.translate(0, 30 + this.lidOffsetY);
+      ctx.save(); ctx.translate(0, yBase + this.lidOffsetY);
       // contour jaune
-      ctx.fillStyle = EDGE; ctx.beginPath();
-      ctx.moveTo(-62, 0); ctx.lineTo(62, 0); ctx.lineTo(50, -34); ctx.lineTo(-50, -34); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = EDGE; ctx.beginPath(); ctx.moveTo(-62, 0); ctx.lineTo(62, 0); ctx.lineTo(50, -34); ctx.lineTo(-50, -34); ctx.closePath(); ctx.fill();
       // panneau rouge
-      ctx.fillStyle = RED; ctx.beginPath();
-      ctx.moveTo(-58, -2); ctx.lineTo(58, -2); ctx.lineTo(46, -30); ctx.lineTo(-46, -30); ctx.closePath(); ctx.fill();
-      // dents supérieures (triangles vers le bas le long du bord inférieur)
+      ctx.fillStyle = RED; ctx.beginPath(); ctx.moveTo(-58, -2); ctx.lineTo(58, -2); ctx.lineTo(46, -30); ctx.lineTo(-46, -30); ctx.closePath(); ctx.fill();
+      // dents supérieures (vers le bas)
       ctx.fillStyle = '#ffffff';
       for (let i=-42; i<=42; i+=14){ ctx.beginPath(); ctx.moveTo(i, -2); ctx.lineTo(i+7, 10); ctx.lineTo(i+14, -2); ctx.closePath(); ctx.fill(); }
-      // yeux méchants (grand aplatis, jaunes, avec sourcils noirs)
+      // yeux plus agressifs (plus étroits, sourcils inclinés fortement vers le centre)
       // oeil gauche
-      ctx.save(); ctx.translate(-22, -18); 
+      ctx.save(); ctx.translate(-22, -16);
       ctx.fillStyle = '#ffeb3b'; ctx.beginPath();
-      ctx.moveTo(-12, 0); ctx.quadraticCurveTo(-2, -8, 12, -2); ctx.quadraticCurveTo(6, 6, -12, 4); ctx.closePath(); ctx.fill();
-      // pupille
-      ctx.fillStyle = '#ff9800'; circle(ctx, 4, -2, 3, true, false);
-      // sourcil
-      ctx.fillStyle = DARK; ctx.beginPath(); ctx.moveTo(-14, -6); ctx.lineTo(14, -12); ctx.lineTo(12, -4); ctx.lineTo(-16, 2); ctx.closePath(); ctx.fill();
-      ctx.restore();
-      // oeil droit
-      ctx.save(); ctx.translate(22, -18); 
-      ctx.fillStyle = '#ffeb3b'; ctx.beginPath();
-      ctx.moveTo(-12, -2); ctx.quadraticCurveTo(2, -10, 12, -2); ctx.quadraticCurveTo(6, 6, -12, 4); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#ff9800'; circle(ctx, 2, -2, 3, true, false);
-      ctx.fillStyle = DARK; ctx.beginPath(); ctx.moveTo(-16, -10); ctx.lineTo(14, -6); ctx.lineTo(12, 0); ctx.lineTo(-18, -4); ctx.closePath(); ctx.fill();
-      ctx.restore();
-      ctx.restore(); // fin couvercle
-
-      // petits liserés sur les arêtes (pincées jaunes/rouges)
-      ctx.strokeStyle = EDGE; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(-60, 16); ctx.lineTo(60, 16); ctx.stroke();
-      ctx.strokeStyle = REDD; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-58, 18); ctx.lineTo(58, 18); ctx.stroke();
-
-      ctx.restore();
-    }
-  }
-  class DoughBallEnemy extends Enemy {
+      ctx.moveTo(-10, -2); ctx.quadraticCurveTo(-4, -12, 10, -6); ctx.quadraticCurveTo(4, 4, -10, 2); ctx.closePath(); ctx.fill();
+      ctx.fillStyl extends Enemy {
     constructor(x,y,vx,vy){ super(x,y,70,70); this.vx=vx; this.vy=vy; this.hp=2; this.score=30; }
     update(dt, game){ this.x+=this.vx*dt; this.y+=this.vy*dt; if (this.x<35 || this.x>W-35) this.vx = -this.vx; if (this.top>H+80) this.alive=false; }
     draw(ctx){ ctx.save(); ctx.translate(this.x,this.y); ctx.fillStyle='#f5e1b4'; ctx.strokeStyle='#b49c78'; ctx.lineWidth=3; circle(ctx,0,0,32,true,true); ctx.fillStyle='#dec89f'; for(let i=0;i<8;i++){ circle(ctx,rand(-22,22),rand(-20,20),2,true); } ctx.restore(); }
   }
   class BossPizza extends Enemy {
-    constructor(game){ super(W/2, 220, 240, 240); this.hp=40; this.score=400; this.angle=0; this.fireCD=1.2; this.burst=0; this.burstGap=0.22; this.vx=60; this.dir=1; this.game=game; this.type='boss'; }
+    constructor(game){ super(W/2, 220, 240, 240); this.hp=40; this.score=400; this.angle=0; this.fireCD=1.2; this.burst=0; this.burstGap=0.22; this.vx=60; this.dir=1; this.game=game; this.type='boss';
+      // toppings aléatoires mais stables pendant le combat
+      this.toppings = { pep:[], olives:[], peppers:[] };
+      for(let i=0;i<10;i++){ const r=rand(24,82), a=rand(0,Math.PI*2); this.toppings.pep.push({x:Math.cos(a)*r, y:Math.sin(a)*r, r:rand(12,16)}); }
+      for(let i=0;i<8;i++){ const r=rand(26,76), a=rand(0,Math.PI*2); const ro=rand(5,7); this.toppings.olives.push({x:Math.cos(a)*r, y:Math.sin(a)*r, ro, ri: ro*0.55}); }
+      for(let i=0;i<8;i++){ const r=rand(30,70), a=rand(0,Math.PI*2); this.toppings.peppers.push({x:Math.cos(a)*r, y:Math.sin(a)*r, rad:rand(8,13), a0:rand(0,Math.PI*2), len:rand(0.9,1.6), w:rand(4,6)}); }
+    }
     update(dt, game){
       // déplacement lent gauche ↔ droite
       this.x += this.vx * this.dir * dt;
@@ -480,15 +492,12 @@
       // base fromage + croûte
       ctx.fillStyle='#ffe178'; ctx.strokeStyle='#b57a3f'; ctx.lineWidth=8; circle(ctx,0,0,110,true,true);
       ctx.strokeStyle='#c88a45'; ctx.lineWidth=16; circle(ctx,0,0,120,false,true);
-      // pepperonis
-      ctx.fillStyle='#c63d3d'; for(let a=0; a<Math.PI*2; a+=Math.PI/6){ const r=70; const px=r*Math.cos(a), py=r*Math.sin(a); circle(ctx,px,py,14,true); }
+      // pepperonis aléatoires
+      ctx.fillStyle='#c63d3d'; for(const p of this.toppings.pep){ circle(ctx,p.x,p.y,p.r,true); }
       // olives noires (anneaux)
-      ctx.lineWidth=4; ctx.strokeStyle='#000';
-      for(let a=Math.PI/12; a<Math.PI*2; a+=Math.PI/5){ const r=60; const px=r*Math.cos(a), py=r*Math.sin(a); circle(ctx,px,py,6,false,true); ctx.fillStyle='#ffe178'; circle(ctx,px,py,3,true,false); }
+      for(const o of this.toppings.olives){ ctx.lineWidth=4; ctx.strokeStyle='#000'; circle(ctx,o.x,o.y,o.ro,false,true); ctx.fillStyle='#ffe178'; circle(ctx,o.x,o.y,o.ri,true,false); }
       // poivrons verts (arcs croquants)
-      ctx.strokeStyle='#2e7d32'; ctx.lineWidth=5; ctx.beginPath();
-      for(let a=0; a<Math.PI*2; a+=Math.PI/3){ const r=50; const px=r*Math.cos(a), py=r*Math.sin(a); ctx.moveTo(px,py); ctx.arc(px,py,10,a+0.2,a+1.2); }
-      ctx.stroke();
+      ctx.strokeStyle='#2e7d32'; for(const g of this.toppings.peppers){ ctx.lineWidth=g.w; ctx.beginPath(); ctx.arc(g.x,g.y,g.rad,g.a0,g.a0+g.len); ctx.stroke(); }
       ctx.restore(); }
     damage(game, d=1){ super.damage(game,d); if (this.hp<=0){ this.alive=false; game.onBossDefeated(); } }
   }
@@ -638,7 +647,7 @@
         if (!e.alive) continue;
         if (e instanceof Enemy || e.type==='boss'){
           // Tir joueur vs ennemi
-          for (const b of this.entities) if (b.type==='playerBullet' && b.alive && b.hits(e)) { b.alive=false; e.damage(this,1); audio.sfxHit(); }
+          for (const b of this.entities) if (b.type==='playerBullet' && b.alive && b.hits(e)) { b.alive=false; e.damage(this,1); audio.sfxHit(); this.add(new HitSpark(b.x,b.y)); }
           // Ennemi vs joueur
           if (this.player.alive && e.hits(this.player)) { e.alive=false; this.player.hit(this); }
         }
@@ -760,12 +769,31 @@
       assert(pb3.lidOffsetY > off1, 'PizzaBox: lidOffsetY doit remonter vers 0 en fermeture');
       results.push('PizzaBox lidOffsetY OK');
 
+      // HitSpark: la vie diminue et l'effet s'arrête
+      const hs = new HitSpark(0,0); const life0 = hs.life; hs.update(0.2); assert(hs.life < life0, 'HitSpark: la durée doit décroître');
+      results.push('HitSpark OK');
+
+      // Boss toppings: présence d'ingrédients aléatoires
+      const bossT = new BossPizza({level:1, add:()=>{}, onBossDefeated:()=>{}});
+      assert(bossT.toppings.pep.length>0 && bossT.toppings.olives.length>0 && bossT.toppings.peppers.length>0, 'Boss: toppings doivent être initialisés');
+      results.push('Boss toppings OK');
+
+      // HitSpark: nombre d'étincelles augmenté
+      const hsCount = new HitSpark(0,0); assert(hsCount.parts.length >= 12, 'HitSpark: devrait générer plus d\'étincelles');
+      results.push('HitSpark count OK');
+
+      // PizzaBox: jet de sauce au passage à open=true
+      let sauceAdds=0; const gSauce={ add:(o)=>{ if (o instanceof SauceBlast) sauceAdds++; }, level:1 };
+      const pb4 = new PizzaBoxEnemy(100,-40,100);
+      pb4.update(0.41, gSauce);
+      assert(sauceAdds>0, 'PizzaBox: doit émettre de la sauce à l\'ouverture');
+      results.push('PizzaBox sauce-on-open OK');
+
       console.info('%c[Tests OK]', 'color:#7CFC00; font-weight:900;', results.join(' | '));
     } catch (e) {
       console.error('[Tests FAILED]', e && e.message ? e.message : e);
     }
   })();
-
   </script>
 </body>
 </html>
